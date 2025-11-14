@@ -1,0 +1,22 @@
+# Auto-generated from scanning Python imports in the project
+# If you need exact pinned versions, adjust the version specifiers below.
+
+scipy>=1.7
+
+soundfile>=0.10.3.post1
+opencv-python>=4.5
+Pillow>=8.3
+pyaudio>=0.2.11
+
+# Core data and math libraries
+pandas
+numpy
+
+# Visualization
+matplotlib
+seaborn
+
+# Machine learning
+scikit-learn
+xgboost
+joblib

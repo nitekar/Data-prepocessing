@@ -1,0 +1,31 @@
+pre_merge_transactions_rows: 252
+pre_social_profiles_rows: 155
+rows_after_merge: 246
+duplicates_before_drop: 6
+duplicates_after_drop: 0
+
+Null counts by column:
+customer_id_legacy: 0
+transaction_id: 0
+purchase_amount: 0
+purchase_date: 0
+product_category: 0
+customer_rating: 19
+legacy_num: 0
+customer_id_new: 33
+social_media_platform: 33
+engagement_score: 33
+purchase_interest_score: 33
+review_sentiment: 33
+legacy_guess: 33
+purchase_month: 0
+is_weekend: 0
+
+unmatched_customer_id_new (na): 33
+
+product_category value counts:
+Sports: 66
+Electronics: 52
+Groceries: 46
+Books: 43
+Clothing: 39
