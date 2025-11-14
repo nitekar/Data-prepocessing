@@ -305,7 +305,7 @@ if __name__ == "__main__":
     processor = ImageProcessor(base_dir='Images')
     
     # Define your team members
-    team_members = ['Ganza', 'Oreste', 'gershom']  # Use real names
+    team_members = ['Ganza', 'Oreste', 'gershom', 'roxanne']
     
     # === ONLY UNCOMMENT THIS FOR TESTING WITHOUT REAL IMAGES ===
     # print("\nCreating sample images (for testing only)...")
