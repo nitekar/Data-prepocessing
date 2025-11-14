@@ -163,12 +163,34 @@ class ImageProcessor:
         """
         features_list = []
         
+        # Map of expression variations
+        expression_map = {
+            'smile': ['smile', 'smiling'],
+            'surprised': ['surprised', 'suprised']
+        }
+        
         for expression in expressions:
-            # Construct file path
+            # Try standard naming first
             img_path = self.base_dir / f"{member_name}_{expression}.jpg"
             
+            # Try variations if not found
             if not img_path.exists():
-                print(f"Warning: {img_path} not found, skipping...")
+                if expression in expression_map:
+                    for variant in expression_map[expression]:
+                        # Try underscore
+                        img_path = self.base_dir / f"{member_name}_{variant}.jpg"
+                        if img_path.exists():
+                            break
+                        # Try hyphen
+                        img_path = self.base_dir / f"{member_name}-{variant}.jpg"
+                        if img_path.exists():
+                            break
+                    else:
+                        # Try hyphen with original expression
+                        img_path = self.base_dir / f"{member_name}-{expression}.jpg"
+            
+            if not img_path.exists():
+                print(f"Warning: Image for {member_name} {expression} not found (tried variations), skipping...")
                 continue
             
             # Load original image
@@ -280,10 +302,10 @@ if __name__ == "__main__":
     print("IMAGE PROCESSING PIPELINE")
     print("="*60)
     
-    processor = ImageProcessor(base_dir='images')
+    processor = ImageProcessor(base_dir='Images')
     
     # Define your team members
-    team_members = ['Ganza', 'Oreste']  # Use real names
+    team_members = ['Ganza', 'Oreste', 'gershom']  # Use real names
     
     # === ONLY UNCOMMENT THIS FOR TESTING WITHOUT REAL IMAGES ===
     # print("\nCreating sample images (for testing only)...")
