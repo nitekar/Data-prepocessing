@@ -57,7 +57,7 @@ preprocessor = ColumnTransformer(
         ('cat', categorical_transformer, categorical_features)
     ])
 
-# Create the full pipeline with a classifier (e.g., RandomForestClassifier)
+# Create the full pipeline with a classifier, RandomForestClassifier
 product_model_pipeline = Pipeline(steps=[('preprocessor', preprocessor),
                                        ('classifier', RandomForestClassifier(random_state=42))])
 
