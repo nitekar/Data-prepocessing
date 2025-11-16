@@ -30,21 +30,18 @@ if os.path.exists(id_mapping_path):
     mapping = pd.read_csv(id_mapping_path)
     trans = trans.merge(mapping, on='customer_id_legacy', how='left')
 else:
-    # Attempt naive join: sometimes legacy ids are transcribed as numbers vs codes:
-    # If the social has numeric IDs embedded in new IDs, try to extract numeric part.
-    # This is a heuristic — replace with mapping if available.
+    # JOIN using ids. legacy ids are transcribed as numbers vs codes:
     try:
         social['legacy_guess'] = social['customer_id_new'].str.extract('(\d+)').astype(float)
         trans['legacy_num'] = pd.to_numeric(trans['customer_id_legacy'], errors='coerce')
         join_df = trans.merge(social, left_on='legacy_num', right_on='legacy_guess', how='left')
-        # If many nulls, fall back to cross-join logic or ask for mapping file.
+        # If many nulls, fall back to cross-join logic
         trans = join_df.copy()
     except Exception as e:
         print("No mapping. Please provide mapping.csv. Falling back to left join on legacy id strings.")
         trans = trans.merge(social, left_on='customer_id_legacy', right_on='customer_id_new', how='left')
 
 # Final merged dataset (join transactions to social profiles on the new ID)
-# If mapping exists we have customer_id_new in trans; otherwise this may be null for many rows
 merged = trans.copy()
 
 # Ensure output folder exists
@@ -107,7 +104,7 @@ print('Wrote merge-output/merge_validation.txt')
 print(merged.describe(include='all'))
 print(merged.dtypes)
 
-# 2. Plot examples (≥3)
+# 2. Plot
 plt.figure(figsize=(6,4))
 sns.histplot(merged['purchase_amount'].dropna(), kde=True)
 plt.title('Distribution of Purchase Amount')

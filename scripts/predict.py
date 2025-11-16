@@ -6,7 +6,16 @@ MODEL_DIR = os.path.join('trained-models', 'models')
 XGB_PATH = os.path.join(MODEL_DIR, 'product_model_xgb.joblib')
 RF_PATH = os.path.join(MODEL_DIR, 'product_model_randomforest.joblib')
 LE_PATH = os.path.join(MODEL_DIR, 'label_encoder.joblib')
-MERGED_CSV = os.path.join('merge-output', 'merged_data.csv')
+# Prefer aggregated merged CSV (created by aggregation step); fall back to raw merged CSV
+MERGED_CSV = None
+agg_path = os.path.join('merge-output', 'merged_data_aggregated.csv')
+raw_path = os.path.join('merge-output', 'merged_data.csv')
+if os.path.exists(agg_path):
+    MERGED_CSV = agg_path
+elif os.path.exists(raw_path):
+    MERGED_CSV = raw_path
+else:
+    MERGED_CSV = None
 
 # Choose model: prefer XGBoost if available
 if os.path.exists(XGB_PATH):
@@ -24,8 +33,8 @@ le = joblib.load(LE_PATH)
 print(f'Loaded model from: {model_path}')
 
 # Load merged data to build a realistic sample (use first non-null row)
-if not os.path.exists(MERGED_CSV):
-    raise FileNotFoundError('merge-output/merged_data.csv not found. Run merge_data_sets.py first.')
+if MERGED_CSV is None:
+    raise FileNotFoundError('No merged dataset found. Run the merge script or confirm files in merge-output/.')
 
 df = pd.read_csv(MERGED_CSV)
 
