@@ -9,11 +9,54 @@ from sklearn.pipeline import Pipeline
 from sklearn.metrics import classification_report, accuracy_score, f1_score
 import joblib
 import os
-from merge_datasets import merged
+import os
+import pandas as pd
 
-# Ensure 'merged_df' is ready
+
+def load_merged_aggregated():
+    # Prefer an aggregated merged dataset if present
+    agg_path = os.path.join('merge-output', 'merged_data_aggregated.csv')
+    fallback_path = os.path.join('merge-output', 'merged_data.csv')
+
+    if os.path.exists(agg_path):
+        return pd.read_csv(agg_path)
+
+    # If aggregated file doesn't exist, try to build it on the fly
+    trans_path = os.path.join('Customer_Dataset', 'customer_transactions.csv')
+    social_path = os.path.join('Customer_Dataset', 'customer_social_profiles.csv')
+    if os.path.exists(trans_path) and os.path.exists(social_path):
+        trans = pd.read_csv(trans_path)
+        social = pd.read_csv(social_path)
+        trans = trans.copy()
+        trans['customer_id_new'] = 'A' + trans['customer_id_legacy'].astype(str)
+
+        # aggregate social profiles per customer
+        agg_num = social.groupby('customer_id_new').agg({
+            'engagement_score': 'mean',
+            'purchase_interest_score': 'mean'
+        }).rename(columns={'engagement_score':'avg_engagement_score','purchase_interest_score':'avg_purchase_interest_score'})
+        mode_sentiment = social.groupby('customer_id_new')['review_sentiment'].agg(lambda x: x.mode().iloc[0] if not x.mode().empty else None)
+        mode_platform = social.groupby('customer_id_new')['social_media_platform'].agg(lambda x: x.mode().iloc[0] if not x.mode().empty else None)
+        counts = social.groupby('customer_id_new').size().rename('social_profile_count')
+        agg_social = agg_num.join(mode_sentiment.rename('dominant_sentiment')).join(mode_platform.rename('dominant_platform')).join(counts).reset_index()
+
+        merged_agg = trans.merge(agg_social, on='customer_id_new', how='left')
+        # persist aggregated merged for reproducibility
+        os.makedirs('merge-output', exist_ok=True)
+        merged_agg.to_csv(agg_path, index=False)
+        return merged_agg
+
+    # Fallback: read the older merged CSV if available
+    if os.path.exists(fallback_path):
+        return pd.read_csv(fallback_path)
+
+    raise FileNotFoundError('No merged dataset found. Run merge scripts to create merge-output/merged_data_aggregated.csv or provide source Customer_Dataset files.')
+
+
+# Load merged aggregated dataframe
+merged_df = load_merged_aggregated()
 # Drop transaction_id and purchase_date for this model, as they are less likely to be direct predictors of future *category*
-model_df = merged.drop(columns=['transaction_id', 'purchase_date', 'customer_id_new'])
+model_df = merged_df.drop(columns=[c for c in ['transaction_id', 'purchase_date', 'customer_id_new'] if c in merged_df.columns])
 
 # Define features (X) and target (y)
 categorical_features = ['social_media_platform', 'review_sentiment']
@@ -50,12 +93,20 @@ categorical_transformer = Pipeline(steps=[
     ('onehot', OneHotEncoder(handle_unknown='ignore'))
 ])
 
+# Use the available feature lists (detected above) for the ColumnTransformer so
+# the pipeline is robust to different merged column names (e.g., avg_engagement_score)
+num_cols_for_transform = available_num
+cat_cols_for_transform = available_cat
+
+if len(num_cols_for_transform) == 0 and len(cat_cols_for_transform) == 0:
+    raise ValueError(f"No features available for preprocessing. Expected any of: {numerical_features + categorical_features}")
+
 # Combine transformers into a preprocessor using ColumnTransformer
 preprocessor = ColumnTransformer(
     transformers=[
-        ('num', numerical_transformer, numerical_features),
-        ('cat', categorical_transformer, categorical_features)
-    ])
+        ('num', numerical_transformer, num_cols_for_transform),
+        ('cat', categorical_transformer, cat_cols_for_transform)
+    ], remainder='drop')
 
 # Create the full pipeline with a classifier, RandomForestClassifier
 product_model_pipeline = Pipeline(steps=[('preprocessor', preprocessor),
