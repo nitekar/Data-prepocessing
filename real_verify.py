@@ -1,113 +1,225 @@
-# verify_live.py
-import librosa
-import pyaudio
-import wave
-import numpy as np
+# live_voice_verification.py - Real-time voice verification
+import torch
 import joblib
-import pandas as pd
+import librosa
+import numpy as np
+import sounddevice as sd
+import soundfile as sf
+from scipy.io.wavfile import write
+import sys
 from pathlib import Path
-from audio_processing import AudioProcessor
 
-# === Load model ===
-model = joblib.load("voice_verification_model.pkl")
-le = joblib.load("label_encoder.pkl")
-feature_cols = joblib.load("feature_columns.pkl")
-processor = AudioProcessor()
-
-# === Fix: Use updated tempo function (NO MORE WARNING) ===
-#def extract_tempo_fixed(y, sr):
-    #onset_env = librosa.onset.onset_strength(y=y, sr=sr)
-    #tempo = librosa.feature.rhythm.tempo(onset_envelope=onset_env, sr=sr)
-    #return tempo[0]
-
-# Monkey-patch the method
-#processor.extract_tempo = extract_tempo_fixed
-
-# === Verification function ===
-def verify_audio_file(wav_path):
-    feature_dict = processor.extract_features_from_file(str(wav_path))
-    df = pd.DataFrame([feature_dict])
-    
-    for col in feature_cols:
-        if col not in df.columns:
-            df[col] = 0.0
-    X = df[feature_cols].values  # ← Fix: Use .values to avoid feature name warning
-
-    proba = model.predict_proba(X)[0]
-    idx = proba.argmax()
-    speaker = le.classes_[idx]
-    confidence = proba[idx]
-    return speaker, confidence
-
-# === Audio settings ===
-CHUNK = 1024
-FORMAT = pyaudio.paInt16
-CHANNELS = 1
-RATE = 22050
-MAX_RECORD_SECONDS = 6.0       # Max allowed
-SILENCE_THRESHOLD = 500        # Amplitude to detect speech
-MIN_SPEECH_SECONDS = 1.5       # Min speech duration
-SILENCE_TO_STOP = 1.0          # Stop after 1 sec silence
-
-p = pyaudio.PyAudio()
-stream = p.open(format=FORMAT, channels=CHANNELS, rate=RATE,
-                input=True, frames_per_buffer=CHUNK)
-
-print("Listening... Say your phrase (up to 6 sec). Silence to stop.\n")
-
-frames = []
-speech_detected = False
-silence_chunks = 0
-max_chunks = int(RATE / CHUNK * MAX_RECORD_SECONDS)
-speech_start_chunk = None
-
-for i in range(max_chunks):
-    data = stream.read(CHUNK, exception_on_overflow=False)
-    frames.append(data)
-    chunk_np = np.frombuffer(data, dtype=np.int16)
-    amplitude = np.abs(chunk_np).mean()
-
-    if amplitude > SILENCE_THRESHOLD:
-        if not speech_detected:
-            print("Speech detected...", end="", flush=True)
-            speech_detected = True
-            speech_start_chunk = i
-        silence_chunks = 0
-        print(".", end="", flush=True)
-    else:
-        if speech_detected:
-            silence_chunks += 1
-            # Stop after 1 sec of silence
-            if silence_chunks > int(RATE / CHUNK * SILENCE_TO_STOP):
-                print("\nSilence detected. Processing...")
-                break
-        else:
-            print(".", end="", flush=True) if i % 10 == 0 else None
-
-# Trim leading silence
-if speech_start_chunk is not None:
-    start_idx = max(0, speech_start_chunk - 5)  # keep 5 chunks before speech
-    frames = frames[start_idx:]
-
-# Save
-temp_wav = "temp_live.wav"
-wf = wave.open(temp_wav, 'wb')
-wf.setnchannels(CHANNELS)
-wf.setsampwidth(p.get_sample_size(FORMAT))
-wf.setframerate(RATE)
-wf.writeframes(b''.join(frames))
-wf.close()
-
-# Duration check
-duration = len(frames) * CHUNK / RATE
-if duration < MIN_SPEECH_SECONDS:
-    print(f"Too short ({duration:.1f}s). Try again.")
+# Monkey-patch for torchaudio
+import torchaudio
+if hasattr(torchaudio, 'list_audio_backends'):
+    backends = torchaudio.list_audio_backends()
 else:
-    speaker, conf = verify_audio_file(temp_wav)
-    print(f"\nSPEAKER: {speaker} (Confidence: {conf:.1%})")
+    backends = ['torchcodec']
+sys.modules['torchaudio'].list_audio_backends = lambda: backends
 
-# Cleanup
-stream.stop_stream()
-stream.close()
-p.terminate()
-Path(temp_wav).unlink(missing_ok=True)
+# Monkey-patch huggingface_hub
+import huggingface_hub
+original_hf_hub_download = huggingface_hub.hf_hub_download
+
+def patched_hf_hub_download(*args, **kwargs):
+    if 'use_auth_token' in kwargs:
+        kwargs['token'] = kwargs.pop('use_auth_token')
+    return original_hf_hub_download(*args, **kwargs)
+
+huggingface_hub.hf_hub_download = patched_hf_hub_download
+
+from speechbrain.inference import EncoderClassifier
+
+class VoiceVerifier:
+    def __init__(self, model_path="speechbrain_classifier.pkl", 
+                 encoder_path="speechbrain_label_encoder.pkl",
+                 pretrained_dir="pretrained_models/"):
+        """Initialize the voice verification system."""
+        print("Loading models...")
+        
+        # Load SpeechBrain ECAPA-TDNN model
+        self.classifier = EncoderClassifier.from_hparams(
+            source="speechbrain/spkrec-ecapa-voxceleb",
+            savedir=pretrained_dir
+        )
+        
+        # Load trained classifier and label encoder
+        self.model = joblib.load(model_path)
+        self.le = joblib.load(encoder_path)
+        
+        print(f"✓ Models loaded. Known speakers: {list(self.le.classes_)}")
+        
+    def extract_embedding(self, audio_path):
+        """Extract ECAPA-TDNN embedding from audio file."""
+        y, sr = librosa.load(audio_path, sr=16000)
+        waveform = torch.tensor(y).unsqueeze(0)
+        
+        with torch.no_grad():
+            emb = self.classifier.encode_batch(waveform)
+        
+        return emb.squeeze().cpu().numpy()
+    
+    def predict_speaker(self, audio_path):
+        """Predict speaker identity with confidence scores."""
+        emb = self.extract_embedding(audio_path)
+        
+        # Get prediction
+        pred_idx = self.model.predict([emb])[0]
+        pred_name = self.le.inverse_transform([pred_idx])[0]
+        
+        # Get confidence scores (probabilities)
+        proba = self.model.predict_proba([emb])[0]
+        confidence = proba[pred_idx] * 100
+        
+        # Get all speaker scores
+        all_scores = {name: prob * 100 for name, prob in zip(self.le.classes_, proba)}
+        
+        return pred_name, confidence, all_scores
+    
+    def record_audio(self, duration=3, sample_rate=16000):
+        """Record audio from microphone."""
+        print(f"\n🎤 Recording for {duration} seconds...")
+        print("Speak now!")
+        
+        # Record audio
+        recording = sd.rec(int(duration * sample_rate), 
+                          samplerate=sample_rate, 
+                          channels=1, 
+                          dtype='float32')
+        sd.wait()
+        
+        print("✓ Recording complete!")
+        return recording, sample_rate
+    
+    def save_recording(self, recording, sample_rate, filename="temp_recording.wav"):
+        """Save recorded audio to file."""
+        sf.write(filename, recording, sample_rate)
+        return filename
+    
+    def verify_live(self, expected_speaker=None, duration=3, threshold=70.0):
+        """
+        Record audio and verify speaker identity.
+        
+        Args:
+            expected_speaker: Name of expected speaker (None for identification only)
+            duration: Recording duration in seconds
+            threshold: Confidence threshold for verification (0-100)
+        
+        Returns:
+            dict: Verification results
+        """
+        # Record audio
+        recording, sample_rate = self.record_audio(duration)
+        
+        # Save to temporary file
+        temp_file = "temp_recording.wav"
+        self.save_recording(recording, sample_rate, temp_file)
+        
+        # Predict speaker
+        pred_name, confidence, all_scores = self.predict_speaker(temp_file)
+        
+        # Verification result
+        result = {
+            'predicted_speaker': pred_name,
+            'confidence': confidence,
+            'all_scores': all_scores,
+            'recording_file': temp_file
+        }
+        
+        if expected_speaker:
+            verified = (pred_name.lower() == expected_speaker.lower() and 
+                       confidence >= threshold)
+            result['expected_speaker'] = expected_speaker
+            result['verified'] = verified
+            result['threshold'] = threshold
+        
+        return result
+
+
+def print_results(result):
+    """Pretty print verification results."""
+    print("\n" + "="*50)
+    print("VOICE VERIFICATION RESULTS")
+    print("="*50)
+    
+    print(f"\n🎯 Predicted Speaker: {result['predicted_speaker']}")
+    print(f"📊 Confidence: {result['confidence']:.1f}%")
+    
+    if 'expected_speaker' in result:
+        print(f"\n👤 Expected Speaker: {result['expected_speaker']}")
+        print(f"✓ Verified: {'YES ✅' if result['verified'] else 'NO ❌'}")
+        print(f"🎚️  Threshold: {result['threshold']:.1f}%")
+    
+    print("\n📈 All Speaker Scores:")
+    for speaker, score in sorted(result['all_scores'].items(), 
+                                 key=lambda x: x[1], 
+                                 reverse=True):
+        bar = "█" * int(score / 5)  # Visual bar
+        print(f"  {speaker:15s}: {score:5.1f}% {bar}")
+    
+    print(f"\n💾 Recording saved: {result['recording_file']}")
+    print("="*50)
+
+
+def main():
+    """Main interactive verification system."""
+    print("\n🔊 Voice Verification System")
+    print("="*50)
+    
+    # Initialize verifier
+    verifier = VoiceVerifier()
+    
+    while True:
+        print("\n\nOptions:")
+        print("1. Identify speaker (no verification)")
+        print("2. Verify specific speaker")
+        print("3. Quit")
+        
+        choice = input("\nEnter choice (1-3): ").strip()
+        
+        if choice == "1":
+            # Speaker identification
+            duration = input("Recording duration (seconds, default=3): ").strip()
+            duration = int(duration) if duration else 3
+            
+            result = verifier.verify_live(duration=duration)
+            print_results(result)
+            
+        elif choice == "2":
+            # Speaker verification
+            print(f"\nAvailable speakers: {list(verifier.le.classes_)}")
+            expected = input("Enter expected speaker name: ").strip()
+            
+            if not expected:
+                print("❌ Speaker name required!")
+                continue
+            
+            duration = input("Recording duration (seconds, default=3): ").strip()
+            duration = int(duration) if duration else 3
+            
+            threshold = input("Confidence threshold (%, default=70): ").strip()
+            threshold = float(threshold) if threshold else 70.0
+            
+            result = verifier.verify_live(
+                expected_speaker=expected,
+                duration=duration,
+                threshold=threshold
+            )
+            print_results(result)
+            
+        elif choice == "3":
+            print("\n👋 Goodbye!")
+            break
+        else:
+            print("❌ Invalid choice!")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n\n👋 Interrupted by user. Goodbye!")
+    except Exception as e:
+        print(f"\n❌ Error: {e}")
+        import traceback
+        traceback.print_exc()

@@ -6,13 +6,17 @@ scipy>=1.7
 soundfile>=0.10.3.post1
 opencv-python>=4.5
 Pillow>=8.3
-pyaudio>=0.2.11
+pyaudio>=0.2.1
+sounddevice
+librosa>=0.9.0
+scikit-image>=0.19.0
 
 # Core data and math libraries
 pandas
 numpy
 
 # Visualization
+
 matplotlib
 seaborn
 
@@ -20,3 +24,14 @@ seaborn
 scikit-learn
 xgboost
 joblib
+
+# Deep learning
+torch>=1.10.0
+torchaudio>=0.10.0
+
+# SpeechBrain
+speechbrain>=0.5.0
+huggingface-hub>=0.10.0
+
+# UI
+tk>=0.1.0
