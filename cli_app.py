@@ -101,8 +101,8 @@ class ModelLoader:
                 source="speechbrain/spkrec-ecapa-voxceleb",
                 savedir="pretrained_models/"
             )
-            self.models['voice_model'] = joblib.load("speechbrain_classifier.pkl")
-            self.models['voice_le'] = joblib.load("speechbrain_label_encoder.pkl")
+            self.models['voice_model'] = joblib.load(self.model_dir / "speechbrain_classifier.pkl")
+            self.models['voice_le'] = joblib.load(self.model_dir / "speechbrain_label_encoder.pkl")
 
             # Product recommendation
             print("  ✓ Product recommendation model")

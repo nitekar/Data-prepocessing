@@ -26,11 +26,11 @@ xgboost
 joblib
 
 # Deep learning
-torch>=1.10.0
+torch
 torchaudio>=0.10.0
 
 # SpeechBrain
-speechbrain>=0.5.0
+speechbrain
 huggingface-hub>=0.10.0
 
 # UI
